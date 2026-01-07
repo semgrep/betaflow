@@ -136,6 +136,26 @@ class KubernetesDecorator(StepDecorator):
         - run_as_user: int, optional, default None
         - run_as_group: int, optional, default None
         - run_as_non_root: bool, optional, default None
+
+    node_affinity: Dict[str, Any], optional, default None
+        Kubernetes node affinity specification. This is automatically wrapped into
+        {"nodeAffinity": ...} format. Example:
+        {"requiredDuringSchedulingIgnoredDuringExecution": {"nodeSelectorTerms": [...]}}
+
+    argo_pod_spec_patch: Dict[str, Any], optional, default None
+        Argo Workflows-specific pod spec patch. This is applied as a strategic merge patch
+        to the pod spec. Only used when deploying to Argo Workflows.
+        Example: {"runtimeClassName": "gvisor", "dnsPolicy": "ClusterFirst"}
+
+    argo_template_patch: Dict[str, Any], optional, default None
+        Argo Workflows-specific template patch. This is an escape hatch for setting
+        arbitrary Argo template-level fields. Only used when deploying to Argo Workflows.
+        Example: {"activeDeadlineSeconds": 3600, "retryStrategy": {"limit": 3}}
+
+    env_from_field_ref: Dict[str, str], optional, default None
+        Additional environment variables to set from pod field references.
+        Maps environment variable names to field paths.
+        Example: {"POD_NAME": "metadata.name", "NODE_NAME": "spec.nodeName"}
     """
 
     name = "kubernetes"
@@ -168,6 +188,10 @@ class KubernetesDecorator(StepDecorator):
         "hostname_resolution_timeout": 10 * 60,
         "qos": KUBERNETES_QOS,
         "security_context": None,
+        "node_affinity": None,
+        "argo_pod_spec_patch": None,
+        "argo_template_patch": None,
+        "env_from_field_ref": None,
     }
     package_metadata = None
     package_url = None
@@ -476,7 +500,13 @@ class KubernetesDecorator(StepDecorator):
             cli_args.command_args.append(self.package_url)
 
             # skip certain keys as CLI arguments
-            _skip_keys = ["compute_pool", "hostname_resolution_timeout"]
+            # argo-specific params are only used in argo_workflows.py
+            _skip_keys = [
+                "compute_pool",
+                "hostname_resolution_timeout",
+                "argo_pod_spec_patch",
+                "argo_template_patch",
+            ]
             # --namespace is used to specify Metaflow namespace (a different
             # concept from k8s namespace).
             for k, v in self.attributes.items():
@@ -496,6 +526,8 @@ class KubernetesDecorator(StepDecorator):
                     "labels",
                     "annotations",
                     "security_context",
+                    "node_affinity",
+                    "env_from_field_ref",
                 ]:
                     cli_args.command_options[k] = json.dumps(v)
                 else:

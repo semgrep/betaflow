@@ -239,6 +239,36 @@ def argo_workflows(obj, name=None):
     type=str,
     help="Custom description for the workflow displayed in Argo Workflows UI. Defaults to the flow's docstring if available. Supports markdown formatting and multi-line text.",
 )
+@click.option(
+    "--executor-service-account",
+    default=None,
+    type=str,
+    help="Service account to use for the Argo executor (for artifact access, etc.).",
+)
+@click.option(
+    "--pod-priority-class-name",
+    default=None,
+    type=str,
+    help="Pod priority class name for the workflow pods.",
+)
+@click.option(
+    "--artifact-repository-ref",
+    default=None,
+    type=str,
+    help="ConfigMap name for artifact repository configuration.",
+)
+@click.option(
+    "--template-defaults",
+    default=None,
+    type=str,
+    help="JSON string of template defaults to apply to all templates (e.g., affinity, tolerations).",
+)
+@click.option(
+    "--workflow-labels-from",
+    default=None,
+    type=str,
+    help="JSON object mapping label names to workflow expressions (e.g., '{\"label-name\": \"workflow.name\"}').",
+)
 @click.pass_obj
 def create(
     obj,
@@ -264,6 +294,11 @@ def create(
     workflow_description=None,
     deployer_attribute_file=None,
     enable_error_msg_capture=False,
+    executor_service_account=None,
+    pod_priority_class_name=None,
+    artifact_repository_ref=None,
+    template_defaults=None,
+    workflow_labels_from=None,
 ):
     # check if we are supposed to block deploying the flow due to name length constraints.
     if obj._exception_on_create is not None:
@@ -307,6 +342,15 @@ def create(
         obj.is_project,
     )
 
+    # Parse JSON options
+    parsed_template_defaults = None
+    if template_defaults:
+        parsed_template_defaults = json.loads(template_defaults)
+
+    parsed_workflow_labels_from = None
+    if workflow_labels_from:
+        parsed_workflow_labels_from = json.loads(workflow_labels_from)
+
     flow = make_flow(
         obj,
         token,
@@ -328,6 +372,11 @@ def create(
         enable_error_msg_capture,
         workflow_title,
         workflow_description,
+        executor_service_account,
+        pod_priority_class_name,
+        artifact_repository_ref,
+        parsed_template_defaults,
+        parsed_workflow_labels_from,
     )
 
     if only_json:
@@ -675,6 +724,11 @@ def make_flow(
     enable_error_msg_capture,
     workflow_title,
     workflow_description,
+    executor_service_account=None,
+    pod_priority_class_name=None,
+    artifact_repository_ref=None,
+    template_defaults=None,
+    workflow_labels_from=None,
 ):
     # TODO: Make this check less specific to Amazon S3 as we introduce
     #       support for more cloud object stores.
@@ -772,6 +826,11 @@ def make_flow(
         enable_error_msg_capture=enable_error_msg_capture,
         workflow_title=workflow_title,
         workflow_description=workflow_description,
+        executor_service_account=executor_service_account,
+        pod_priority_class_name=pod_priority_class_name,
+        artifact_repository_ref=artifact_repository_ref,
+        template_defaults=template_defaults,
+        workflow_labels_from=workflow_labels_from,
     )
 
 

@@ -331,16 +331,7 @@ def create(
         #       likely that Metaflow users may not have access to metadata service from
         #       within their workstations.
         check_metadata_service_version(obj)
-
-    token = resolve_token(
-        obj.workflow_name,
-        obj.token_prefix,
-        obj,
-        authorize,
-        given_token,
-        generate_new_token,
-        obj.is_project,
-    )
+    token = None
 
     # Parse JSON options
     parsed_template_defaults = None
@@ -350,7 +341,6 @@ def create(
     parsed_workflow_labels_from = None
     if workflow_labels_from:
         parsed_workflow_labels_from = json.loads(workflow_labels_from)
-
     flow = make_flow(
         obj,
         token,

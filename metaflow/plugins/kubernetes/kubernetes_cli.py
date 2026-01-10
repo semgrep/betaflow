@@ -158,20 +158,6 @@ def kubernetes():
     type=JSONTypeClass(),
     multiple=False,
 )
-@click.option(
-    "--node-affinity",
-    default=None,
-    type=JSONTypeClass(),
-    multiple=False,
-    help="Node affinity specification for Kubernetes pod.",
-)
-@click.option(
-    "--env-from-field-ref",
-    default=None,
-    type=JSONTypeClass(),
-    multiple=False,
-    help="Additional environment variables from pod field references.",
-)
 @click.pass_context
 def step(
     ctx,
@@ -206,8 +192,6 @@ def step(
     labels=None,
     annotations=None,
     security_context=None,
-    node_affinity=None,
-    env_from_field_ref=None,
     **kwargs
 ):
     def echo(msg, stream="stderr", job_id=None, **kwargs):
@@ -354,8 +338,6 @@ def step(
                 labels=labels,
                 annotations=annotations,
                 security_context=security_context,
-                node_affinity=node_affinity,
-                env_from_field_ref=env_from_field_ref,
             )
     except Exception:
         traceback.print_exc(chain=False)

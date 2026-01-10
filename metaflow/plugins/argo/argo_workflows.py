@@ -90,34 +90,6 @@ class ArgoWorkflowsSchedulingException(MetaflowException):
 #     5. Ping @savin at slack.outerbounds.co for any feature request
 
 
-def _deep_merge_dict(base, override):
-    """Deep merge two dictionaries, with override taking precedence."""
-    if base is None:
-        return override
-    if override is None:
-        return base
-    result = base.copy()
-    for key, value in override.items():
-        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
-            result[key] = _deep_merge_dict(result[key], value)
-        else:
-            result[key] = value
-    return result
-
-
-def _merge_pod_spec_patches(*patches):
-    """Merge multiple pod spec patches into one.
-
-    Later patches override earlier ones for conflicting keys.
-    Returns None if all patches are None.
-    """
-    result = None
-    for patch in patches:
-        if patch is not None:
-            result = _deep_merge_dict(result, patch)
-    return result
-
-
 class ArgoWorkflows(object):
     def __init__(
         self,
@@ -151,11 +123,6 @@ class ArgoWorkflows(object):
         enable_error_msg_capture=False,
         workflow_title=None,
         workflow_description=None,
-        executor_service_account=None,
-        pod_priority_class_name=None,
-        artifact_repository_ref=None,
-        template_defaults=None,
-        workflow_labels_from=None,
     ):
         # Some high-level notes -
         #
@@ -214,11 +181,6 @@ class ArgoWorkflows(object):
         self.enable_error_msg_capture = enable_error_msg_capture
         self.workflow_title = workflow_title
         self.workflow_description = workflow_description
-        self.executor_service_account = executor_service_account
-        self.pod_priority_class_name = pod_priority_class_name
-        self.artifact_repository_ref = artifact_repository_ref
-        self.template_defaults = template_defaults
-        self.workflow_labels_from = workflow_labels_from
         self.parameters = self._process_parameters()
         self.config_parameters = self._process_config_parameters()
         self.triggers, self.trigger_options = self._process_triggers()
@@ -956,14 +918,6 @@ class ArgoWorkflows(object):
                 # .metrics(...)
                 # TODO: Support PodGC and DisruptionBudgets
                 .priority(self.workflow_priority)
-                # Set executor service account (for artifact access, etc.)
-                .executor(self.executor_service_account)
-                # Set pod priority class
-                .pod_priority_class_name(self.pod_priority_class_name)
-                # Set artifact repository reference
-                .artifact_repository_ref(self.artifact_repository_ref)
-                # Set template defaults (apply to all templates)
-                .template_defaults(self.template_defaults)
                 # Set workflow metadata
                 .workflow_metadata(
                     Metadata()
@@ -985,8 +939,11 @@ class ArgoWorkflows(object):
                             **{"metaflow/run_id": "argo-{{workflow.name}}"},
                         }
                     )
-                    # Set dynamic labels using labels_from
-                    .labels_from(self.workflow_labels_from or {})
+                    # TODO: Set dynamic labels using labels_from. Ideally, we would
+                    #       want to expose run_id as a label. It's easy to add labels,
+                    #       but very difficult to remove them - let's err on the
+                    #       conservative side and only add labels when we come across
+                    #       use-cases for them.
                 )
                 # Handle parameters
                 .arguments(
@@ -2752,25 +2709,17 @@ class ArgoWorkflows(object):
                     .node_selectors(resources.get("node_selector"))
                     # Set tolerations
                     .tolerations(resources.get("tolerations"))
-                    # Set node affinity if provided
-                    .affinity(resources.get("node_affinity"))
                     # Set image pull secrets if present. We need to use pod_spec_patch due to Argo not supporting this on a template level.
-                    # Also merge with user-provided argo_pod_spec_patch
                     .pod_spec_patch(
-                        _merge_pod_spec_patches(
-                            {
-                                "imagePullSecrets": [
-                                    {"name": secret}
-                                    for secret in resources["image_pull_secrets"]
-                                ]
-                            }
-                            if resources.get("image_pull_secrets")
-                            else None,
-                            resources.get("argo_pod_spec_patch"),
-                        )
+                        {
+                            "imagePullSecrets": [
+                                {"name": secret}
+                                for secret in resources["image_pull_secrets"]
+                            ]
+                        }
+                        if resources["image_pull_secrets"]
+                        else None
                     )
-                    # Apply arbitrary template-level patches (escape hatch)
-                    .apply_patch(resources.get("argo_template_patch"))
                     # Set container
                     .container(
                         # TODO: Unify the logic with kubernetes.py
@@ -2801,7 +2750,6 @@ class ArgoWorkflows(object):
                                 ]
                                 # Add environment variables for book-keeping.
                                 # https://argoproj.github.io/argo-workflows/fields/#fields_155
-                                # Also includes user-provided env_from_field_ref
                                 + [
                                     kubernetes_sdk.V1EnvVar(
                                         name=k,
@@ -2818,7 +2766,6 @@ class ArgoWorkflows(object):
                                         "METAFLOW_KUBERNETES_POD_ID": "metadata.uid",
                                         "METAFLOW_KUBERNETES_SERVICE_ACCOUNT_NAME": "spec.serviceAccountName",
                                         "METAFLOW_KUBERNETES_NODE_IP": "status.hostIP",
-                                        **(resources.get("env_from_field_ref") or {}),
                                     }.items()
                                 ],
                                 image=resources["image"],
@@ -4261,54 +4208,6 @@ class WorkflowSpec(object):
             self.payload["hooks"].update({k: v.to_json()})
         return self
 
-    def executor(self, service_account_name=None):
-        """Set the executor configuration for the workflow.
-
-        This sets the service account used for workflow execution.
-        """
-        if service_account_name is not None:
-            if "executor" not in self.payload:
-                self.payload["executor"] = {}
-            self.payload["executor"]["serviceAccountName"] = service_account_name
-        return self
-
-    def pod_priority_class_name(self, priority_class_name=None):
-        """Set the pod priority class name for the workflow."""
-        if priority_class_name is not None:
-            self.payload["podPriorityClassName"] = priority_class_name
-        return self
-
-    def artifact_repository_ref(self, config_map=None, key=None):
-        """Set the artifact repository reference.
-
-        Args:
-            config_map: Name of the ConfigMap containing artifact repository config
-            key: Key within the ConfigMap (optional, uses default if not specified)
-        """
-        if config_map is not None:
-            self.payload["artifactRepositoryRef"] = {"configMap": config_map}
-            if key is not None:
-                self.payload["artifactRepositoryRef"]["key"] = key
-        return self
-
-    def template_defaults(self, defaults=None):
-        """Set template defaults that apply to all templates.
-
-        This is useful for setting common configuration like affinity,
-        tolerations, or other template-level settings.
-        """
-        if defaults is not None:
-            if "templateDefaults" not in self.payload:
-                self.payload["templateDefaults"] = {}
-            self.payload["templateDefaults"].update(defaults)
-        return self
-
-    def security_context(self, security_context=None):
-        """Set the workflow-level security context."""
-        if security_context is not None:
-            self.payload["securityContext"] = security_context
-        return self
-
     def to_json(self):
         return self.payload
 
@@ -4530,31 +4429,6 @@ class Template(object):
 
     def tolerations(self, tolerations):
         self.payload["tolerations"] = tolerations
-        return self
-
-    def affinity(self, affinity=None):
-        """Set node affinity for the template.
-
-        The affinity parameter should be the inner content (e.g.,
-        {"requiredDuringSchedulingIgnoredDuringExecution": ...}).
-        It will be automatically wrapped into {"nodeAffinity": ...}.
-        """
-        if affinity is None:
-            return self
-        # Wrap into nodeAffinity if provided
-        self.payload["affinity"] = {"nodeAffinity": affinity}
-        return self
-
-    def apply_patch(self, patch=None):
-        """Apply arbitrary template-level patches.
-
-        This is an escape hatch for setting arbitrary Argo template fields.
-        The patch dict is merged into the template payload.
-        """
-        if patch is None:
-            return self
-        for key, value in patch.items():
-            self.payload[key] = value
         return self
 
     def to_json(self):

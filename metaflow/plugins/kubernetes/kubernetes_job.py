@@ -89,25 +89,6 @@ class KubernetesJob(object):
                 "security_context": client.V1SecurityContext(**security_context)
             }
 
-        # Build affinity from node_affinity if provided
-        node_affinity = self._kwargs.get("node_affinity")
-        _affinity = None
-        if node_affinity:
-            # Wrap into {"nodeAffinity": ...} format if not already wrapped
-            _affinity = client.V1Affinity(node_affinity=node_affinity)
-
-        # Merge default field refs with user-provided ones
-        default_field_refs = {
-            "METAFLOW_KUBERNETES_NAMESPACE": "metadata.namespace",
-            "METAFLOW_KUBERNETES_POD_NAMESPACE": "metadata.namespace",
-            "METAFLOW_KUBERNETES_POD_NAME": "metadata.name",
-            "METAFLOW_KUBERNETES_POD_ID": "metadata.uid",
-            "METAFLOW_KUBERNETES_SERVICE_ACCOUNT_NAME": "spec.serviceAccountName",
-            "METAFLOW_KUBERNETES_NODE_IP": "status.hostIP",
-        }
-        user_field_refs = self._kwargs.get("env_from_field_ref") or {}
-        all_field_refs = {**default_field_refs, **user_field_refs}
-
         return client.V1JobSpec(
             # Retries are handled by Metaflow when it is responsible for
             # executing the flow. The responsibility is moved to Kubernetes
@@ -127,8 +108,8 @@ class KubernetesJob(object):
                 spec=client.V1PodSpec(
                     # Timeout is set on the pod and not the job (important!)
                     active_deadline_seconds=self._kwargs["timeout_in_seconds"],
-                    # Node affinity support
-                    affinity=_affinity,
+                    # TODO (savin): Enable affinities for GPU scheduling.
+                    # affinity=?,
                     containers=[
                         client.V1Container(
                             command=self._kwargs["command"],
@@ -150,7 +131,7 @@ class KubernetesJob(object):
                             ]
                             # And some downward API magic. Add (key, value)
                             # pairs below to make pod metadata available
-                            # within Kubernetes container. Also includes user-provided field refs.
+                            # within Kubernetes container.
                             + [
                                 client.V1EnvVar(
                                     name=k,
@@ -160,7 +141,14 @@ class KubernetesJob(object):
                                         )
                                     ),
                                 )
-                                for k, v in all_field_refs.items()
+                                for k, v in {
+                                    "METAFLOW_KUBERNETES_NAMESPACE": "metadata.namespace",
+                                    "METAFLOW_KUBERNETES_POD_NAMESPACE": "metadata.namespace",
+                                    "METAFLOW_KUBERNETES_POD_NAME": "metadata.name",
+                                    "METAFLOW_KUBERNETES_POD_ID": "metadata.uid",
+                                    "METAFLOW_KUBERNETES_SERVICE_ACCOUNT_NAME": "spec.serviceAccountName",
+                                    "METAFLOW_KUBERNETES_NODE_IP": "status.hostIP",
+                                }.items()
                             ]
                             + [
                                 client.V1EnvVar(name=k, value=str(v))
